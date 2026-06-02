@@ -1,0 +1,72 @@
+{
+  "twinkle_c_major.mid": {
+    "key": "C major",
+    "time_signature": "4/4",
+    "chords_per_measure": [
+      "C",
+      "F",
+      "F",
+      "C",
+      "C",
+      "G",
+      "C",
+      "G"
+    ]
+  },
+  "mary_lamb_c_major.mid": {
+    "key": "C major",
+    "time_signature": "4/4",
+    "chords_per_measure": [
+      "C",
+      "C",
+      "G",
+      "C",
+      "C",
+      "C",
+      "G",
+      "C"
+    ]
+  },
+  "ode_joy_c_major.mid": {
+    "key": "C major",
+    "time_signature": "4/4",
+    "chords_per_measure": [
+      "C",
+      "G",
+      "C",
+      "G",
+      "C",
+      "G",
+      "C",
+      "C"
+    ]
+  },
+  "cm_lament.mid": {
+    "key": "C natural minor",
+    "time_signature": "4/4",
+    "chords_per_measure": [
+      "Cm",
+      "Cm",
+      "Ab",
+      "Gm",
+      "Cm",
+      "Cm",
+      "Fm",
+      "Cm"
+    ]
+  },
+  "c_major_pop.mid": {
+    "key": "C major",
+    "time_signature": "4/4",
+    "chords_per_measure": [
+      "C",
+      "G",
+      "Am",
+      "F",
+      "C",
+      "G",
+      "Am",
+      "F"
+    ]
+  }
+}

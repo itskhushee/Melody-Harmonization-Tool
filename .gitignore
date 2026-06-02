@@ -12,9 +12,7 @@ build/
 venv/
 env/
 
-# Large data files
-data/raw/*
-!data/raw/.gitkeep
+# Large data files (processed outputs only)
 data/processed/*
 !data/processed/.gitkeep
 
