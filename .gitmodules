@@ -1,3 +1,6 @@
 [submodule "data/raw/POP909-Dataset"]
 	path = data/raw/POP909-Dataset
 	url = https://github.com/music-x-lab/POP909-Dataset.git
+[submodule "data/raw/nottingham-dataset"]
+	path = data/raw/nottingham-dataset
+	url = https://github.com/jukedeck/nottingham-dataset.git
