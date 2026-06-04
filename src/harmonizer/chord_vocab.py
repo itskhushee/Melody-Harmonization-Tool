@@ -1,25 +1,25 @@
 """Chord vocabulary — defines the hidden states of the HMM.
 
 Each chord is represented as a root pitch class (0–11) plus a quality.
-The vocabulary covers all 12 keys × 11 qualities (132 chords) plus a
-no-chord token "N", for a total of 133 states.
+The vocabulary covers all 12 keys × 2 qualities (24 chords) plus a
+no-chord token "N", for a total of 25 states.
 
-Quality set is aligned with the POP909 dataset annotation vocabulary
-(mir_eval / JAMS standard).
+Only major and minor triads are used. When parsing POP909 annotations,
+all other qualities are folded into their closest major/minor equivalent.
 
 POP909 label → internal label mapping
 --------------------------------------
-  maj    → maj        minor triad
+  maj    → maj        major triad
   min    → min        minor triad
-  7      → dom7       dominant seventh
-  maj7   → maj7       major seventh
-  min7   → min7       minor seventh
-  sus2   → sus2       suspended second
-  sus4   → sus4       suspended fourth
-  dim    → dim        diminished triad
-  hdim7  → hdim7      half-diminished (min7b5)
-  dim7   → dim7       fully-diminished seventh
-  aug    → aug        augmented triad
+  7      → maj        dominant seventh → major
+  maj7   → maj        major seventh   → major
+  min7   → min        minor seventh   → minor
+  sus2   → maj        suspended second → major
+  sus4   → maj        suspended fourth → major
+  dim    → min        diminished       → minor
+  hdim7  → min        half-diminished  → minor
+  dim7   → min        fully-diminished → minor
+  aug    → maj        augmented        → major
   N      → N          no chord / silence
 """
 
@@ -27,51 +27,31 @@ from __future__ import annotations
 
 ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-QUALITIES = [
-    "maj",
-    "min",
-    "dom7",
-    "maj7",
-    "min7",
-    "sus2",
-    "sus4",
-    "dim",
-    "hdim7",
-    "dim7",
-    "aug",
-]
+QUALITIES = ["maj", "min"]
 
 # Full chord vocabulary: all root × quality combinations + no-chord token
+# 12 roots × 2 qualities = 24 chords + N = 25 states
 CHORD_VOCAB: list[str] = [f"{r}:{q}" for r in ROOTS for q in QUALITIES] + ["N"]
 
 # Pitch classes (semitones above root) for each quality
 QUALITY_INTERVALS: dict[str, list[int]] = {
-    "maj":   [0, 4, 7],
-    "min":   [0, 3, 7],
-    "dom7":  [0, 4, 7, 10],
-    "maj7":  [0, 4, 7, 11],
-    "min7":  [0, 3, 7, 10],
-    "sus2":  [0, 2, 7],
-    "sus4":  [0, 5, 7],
-    "dim":   [0, 3, 6],
-    "hdim7": [0, 3, 6, 10],
-    "dim7":  [0, 3, 6, 9],
-    "aug":   [0, 4, 8],
+    "maj": [0, 4, 7],
+    "min": [0, 3, 7],
 }
 
-# POP909 annotation label → internal quality label
+# POP909 annotation label → internal quality (maj or min only)
 POP909_QUALITY_MAP: dict[str, str] = {
     "maj":   "maj",
     "min":   "min",
-    "7":     "dom7",
-    "maj7":  "maj7",
-    "min7":  "min7",
-    "sus2":  "sus2",
-    "sus4":  "sus4",
-    "dim":   "dim",
-    "hdim7": "hdim7",
-    "dim7":  "dim7",
-    "aug":   "aug",
+    "7":     "maj",
+    "maj7":  "maj",
+    "min7":  "min",
+    "sus2":  "maj",
+    "sus4":  "maj",
+    "dim":   "min",
+    "hdim7": "min",
+    "dim7":  "min",
+    "aug":   "maj",
 }
 
 # Enharmonic root spellings used in POP909 → canonical root
@@ -103,8 +83,8 @@ def normalize_pop909_label(raw: str) -> str:
 
 # Baseline key-specific chord sets for the first HMM demo.
 # These use the existing "Root:quality" label format from CHORD_VOCAB.
-C_MAJOR_BASELINE_CHORDS: list[str] = ["C:maj", "F:maj", "G:maj", "A:min"]
-C_MINOR_BASELINE_CHORDS: list[str] = ["C:min", "F:min", "G:maj", "G#:maj", "A#:maj"]
+C_MAJOR_BASELINE_CHORDS: list[str] = ["C:maj", "D:min", "E:min", "F:maj", "G:maj", "A:min", "B:min"]
+C_MINOR_BASELINE_CHORDS: list[str] = ["C:min", "D:min", "D#:maj", "F:min", "G:min", "G#:maj", "A#:maj"]
 
 # Scale pitch classes for scoring melody notes against the selected key.
 C_MAJOR_SCALE_PCS: set[int] = {0, 2, 4, 5, 7, 9, 11}
