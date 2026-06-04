@@ -5,7 +5,9 @@ No external HMM libraries are used. All matrix operations use numpy only.
 
 from __future__ import annotations
 import numpy as np
-
+from harmonizer.chord_vocab import get_chords_for_key
+from harmonizer.emissions import emission_score
+from harmonizer.transitions import transition_score
 
 class HMM:
     """Discrete Hidden Markov Model.
@@ -23,37 +25,63 @@ class HMM:
         self.N = A.shape[0]  # number of hidden states
         self.M = B.shape[1]  # observation vocabulary size
 
-    def viterbi(self, observations: list[int]) -> list[int]:
-        """Return the most likely state sequence for the observation sequence.
+    def viterbi_harmonize(melody_by_measure: list[list[int]], key: str = "C_major") -> list[str]:
+        """Predict one chord per measure using a simple HMM/Viterbi algorithm."""
+        states, scale_pcs = get_chords_for_key(key)
 
-        Args:
-            observations: List of integer observation indices.
+        if not melody_by_measure:
+            return []
 
-        Returns:
-            List of integer state indices (same length as observations).
-        """
-        T = len(observations)
-        log_pi = np.log(self.pi + 1e-300)
-        log_A  = np.log(self.A  + 1e-300)
-        log_B  = np.log(self.B  + 1e-300)
+        dp: list[dict[str, float]] = []
+        backpointer: list[dict[str, str | None]] = []
 
-        delta = np.full((T, self.N), -np.inf)
-        psi   = np.zeros((T, self.N), dtype=int)
+        first_scores: dict[str, float] = {}
+        first_backpointers: dict[str, str | None] = {}
 
-        delta[0] = log_pi + log_B[:, observations[0]]
+        for state in states:
+            first_scores[state] = emission_score(melody_by_measure[0], state, scale_pcs)
+            first_backpointers[state] = None
 
-        for t in range(1, T):
-            for j in range(self.N):
-                scores = delta[t - 1] + log_A[:, j]
-                psi[t, j]   = np.argmax(scores)
-                delta[t, j] = scores[psi[t, j]] + log_B[j, observations[t]]
+        dp.append(first_scores)
+        backpointer.append(first_backpointers)
 
-        # Backtrack
-        path = [int(np.argmax(delta[T - 1]))]
-        for t in range(T - 1, 0, -1):
-            path.append(psi[t, path[-1]])
-        path.reverse()
-        return path
+        for time_step in range(1, len(melody_by_measure)):
+            current_scores: dict[str, float] = {}
+            current_backpointers: dict[str, str | None] = {}
+
+            for current_state in states:
+                best_score = -1.0
+                best_previous_state: str | None = None
+                current_emission = emission_score(melody_by_measure[time_step], current_state, scale_pcs)
+
+                for previous_state in states:
+                    candidate_score = (
+                        dp[time_step - 1][previous_state]
+                        * transition_score(previous_state, current_state, key)
+                        * current_emission
+                    )
+
+                    if candidate_score > best_score:
+                        best_score = candidate_score
+                        best_previous_state = previous_state
+
+                current_scores[current_state] = best_score
+                current_backpointers[current_state] = best_previous_state
+
+            dp.append(current_scores)
+            backpointer.append(current_backpointers)
+
+        best_last_state = max(dp[-1], key=dp[-1].get)
+        best_path = [best_last_state]
+
+        for time_step in range(len(melody_by_measure) - 1, 0, -1):
+            previous_state = backpointer[time_step][best_path[-1]]
+            if previous_state is None:
+                break
+            best_path.append(previous_state)
+
+        best_path.reverse()
+        return best_path
 
     def k_best_viterbi(self, observations: list[int], k: int) -> list[tuple[float, list[int]]]:
         """Return the k most likely state sequences (lazy beam approximation).
