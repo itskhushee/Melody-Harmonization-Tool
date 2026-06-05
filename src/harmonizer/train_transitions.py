@@ -7,6 +7,7 @@ so the learned weights are key-agnostic and apply to all 24 keys.
 from __future__ import annotations
 import json
 import random
+import numpy as np
 from pathlib import Path
 
 from harmonizer.chord_vocab import (
@@ -115,6 +116,94 @@ def learn_transitions(
         }
 
     return {"major": _normalize(major_counts), "minor": _normalize(minor_counts)}
+
+
+def learn_pi(
+    pop909_dir: str,
+    train_ids: list[str],
+    smoothing: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Learn initial state distribution from the first chord of each song.
+
+    Returns:
+        (pi_major, pi_minor) — each shape (7,), normalised to sum to 1.
+    """
+    import numpy as np
+    base = Path(pop909_dir)
+
+    major_counts = {r: smoothing for r in MAJOR_ROMAN_NUMERALS}
+    minor_counts = {r: smoothing for r in MINOR_ROMAN_NUMERALS}
+
+    for song_id in train_ids:
+        song_dir = base / song_id
+        try:
+            key = pop909_key_to_internal((song_dir / "key_audio.txt").read_text())
+            chord_to_roman = get_chord_to_roman_map_for_key(key)
+            chords = _read_chord_sequence(song_dir / "chord_midi.txt")
+            _, mode = key.rsplit("_", 1)
+            counts = major_counts if mode == "major" else minor_counts
+
+            for chord in chords:
+                if chord != "N" and chord in chord_to_roman:
+                    roman = chord_to_roman[chord]
+                    if roman in counts:
+                        counts[roman] += 1
+                    break
+        except Exception:
+            continue
+
+    pi_major = np.array([major_counts[r] for r in MAJOR_ROMAN_NUMERALS])
+    pi_minor = np.array([minor_counts[r] for r in MINOR_ROMAN_NUMERALS])
+    return pi_major / pi_major.sum(), pi_minor / pi_minor.sum()
+
+
+def build_A_matrices(probs: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Convert learned_probs dict to numpy A matrices.
+
+    Returns:
+        (A_major, A_minor) — each shape (7, 7).
+    """
+    import numpy as np
+    A_major = np.array([
+        [probs["major"][r1][r2] for r2 in MAJOR_ROMAN_NUMERALS]
+        for r1 in MAJOR_ROMAN_NUMERALS
+    ])
+    A_minor = np.array([
+        [probs["minor"][r1][r2] for r2 in MINOR_ROMAN_NUMERALS]
+        for r1 in MINOR_ROMAN_NUMERALS
+    ])
+    return A_major, A_minor
+
+
+def train_hmm(
+    pop909_dir: str,
+    train_ids: list[str],
+    midi_files_dir: str,
+    smoothing: float = 1.0,
+) -> "HMM":
+    """Train a full HMM from POP909 (pi + A) and free-midi-chords (B).
+
+    Args:
+        pop909_dir:     Path to POP909/POP909/ directory.
+        train_ids:      Song IDs to train on.
+        midi_files_dir: Path to free-midi-chords midi_files/ directory.
+        smoothing:      Laplace smoothing for counts.
+
+    Returns:
+        Trained HMM instance with pi, A, B properly populated.
+    """
+    from harmonizer.hmm import HMM
+    from harmonizer.train_emissions import learn_emissions
+
+    print("Learning pi and A from POP909...")
+    probs              = learn_transitions(pop909_dir, train_ids, smoothing)
+    pi_major, pi_minor = learn_pi(pop909_dir, train_ids, smoothing)
+    A_major,  A_minor  = build_A_matrices(probs)
+
+    print("Learning B from free-midi-chords...")
+    emissions = learn_emissions(midi_files_dir)
+
+    return HMM(pi_major, pi_minor, A_major, A_minor, emissions)
 
 
 def save_transitions(probs: dict, path: str) -> None:

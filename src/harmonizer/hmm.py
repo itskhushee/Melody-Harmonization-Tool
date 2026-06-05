@@ -1,104 +1,127 @@
-"""HMM inference — Viterbi decoding implemented from scratch using numpy."""
+"""HMM — trained model with pi, A, B and log-space Viterbi decoding."""
 
 from __future__ import annotations
+import json
 import numpy as np
+from pathlib import Path
 from harmonizer.chord_vocab import get_chords_for_key
-from harmonizer.emissions import emission_score
-from harmonizer.transitions import transition_score
 
 
 class HMM:
-    """Discrete Hidden Markov Model.
+    """Trained Hidden Markov Model for chord prediction.
 
     Attributes:
-        pi:  Initial state distribution, shape (N,)
-        A:   Transition matrix, shape (N, N)  A[i,j] = P(s_t=j | s_{t-1}=i)
-        B:   Emission matrix, shape (N, M)    B[i,k] = P(o_t=k | s_t=i)
+        pi_major: Initial state distribution for major keys, shape (7,)
+        pi_minor: Initial state distribution for minor keys, shape (7,)
+        A_major:  Transition matrix for major keys, shape (7, 7)
+        A_minor:  Transition matrix for minor keys, shape (7, 7)
+        emissions: Dict {chord_label: {pc_str: probability}} from free-midi-chords
     """
 
-    def __init__(self, pi: np.ndarray, A: np.ndarray, B: np.ndarray) -> None:
-        self.pi = pi
-        self.A = A
-        self.B = B
-        self.N = A.shape[0]
-        self.M = B.shape[1]
+    def __init__(
+        self,
+        pi_major: np.ndarray,
+        pi_minor: np.ndarray,
+        A_major: np.ndarray,
+        A_minor: np.ndarray,
+        emissions: dict,
+    ) -> None:
+        self.pi_major  = pi_major
+        self.pi_minor  = pi_minor
+        self.A_major   = A_major
+        self.A_minor   = A_minor
+        self.emissions = emissions
 
-    @staticmethod
     def viterbi_harmonize(
+        self,
         melody_by_measure: list[list[int]],
         key: str = "C_major",
-        learned_probs: dict | None = None,
-        learned_emissions: dict | None = None,
     ) -> list[str]:
-        """Predict one chord per measure using the Viterbi algorithm.
+        """Predict one chord per measure using log-space Viterbi decoding.
 
         Args:
             melody_by_measure: List of measures; each measure is a list of
                                pitch classes (0–11).
             key:               Key to harmonize in, e.g. "G_major", "D_minor".
-            learned_probs:     Optional data-driven transition probabilities from
-                               train_transitions.learn_transitions(). Uses
-                               music-theory weights when None.
 
         Returns:
             List of chord label strings, one per measure.
         """
-        states, scale_pcs = get_chords_for_key(key)
+        states, _ = get_chords_for_key(key)
+        _, mode   = key.rsplit("_", 1)
+        n = len(states)
+        T = len(melody_by_measure)
 
-        if not melody_by_measure:
+        if T == 0:
             return []
 
-        dp: list[dict[str, float]] = []
-        backpointer: list[dict[str, str | None]] = []
+        # ── Build log matrices for this key ──────────────────────────────────
+        pi = self.pi_major if mode == "major" else self.pi_minor
+        A  = self.A_major  if mode == "major" else self.A_minor
 
-        # Initialise with emission scores only (no prior transition)
-        first_scores = {
-            state: emission_score(melody_by_measure[0], state, scale_pcs, learned_emissions)
-            for state in states
-        }
-        dp.append(first_scores)
-        backpointer.append({state: None for state in states})
+        log_pi = np.log(pi + 1e-10)          # shape (7,)
+        log_A  = np.log(A  + 1e-10)          # shape (7, 7)
 
-        for t in range(1, len(melody_by_measure)):
-            current_scores: dict[str, float] = {}
-            current_backpointers: dict[str, str | None] = {}
-            current_emission = {
-                state: emission_score(melody_by_measure[t], state, scale_pcs, learned_emissions)
-                for state in states
-            }
+        # B matrix: P(pitch_class | chord), shape (7, 12)
+        B = np.zeros((n, 12))
+        for i, chord in enumerate(states):
+            for pc_str, prob in self.emissions.get(chord, {}).items():
+                B[i, int(pc_str)] = prob
+        log_B = np.log(B + 1e-10)            # shape (7, 12)
 
-            for curr in states:
-                best_score = -1.0
-                best_prev: str | None = None
+        # ── Helper: average log-emission over all notes in a measure ─────────
+        def log_obs(t: int, state_idx: int) -> float:
+            notes = melody_by_measure[t]
+            if not notes:
+                return 0.0
+            return sum(log_B[state_idx, pc % 12] for pc in notes) / len(notes)
 
-                for prev in states:
-                    score = (
-                        dp[t - 1][prev]
-                        * transition_score(prev, curr, key, learned_probs)
-                        * current_emission[curr]
-                    )
-                    if score > best_score:
-                        best_score = score
-                        best_prev = prev
+        # ── Viterbi DP ────────────────────────────────────────────────────────
+        delta = np.full((T, n), -np.inf)
+        psi   = np.zeros((T, n), dtype=int)
 
-                current_scores[curr] = best_score
-                current_backpointers[curr] = best_prev
+        # Initialisation
+        for i in range(n):
+            delta[0, i] = log_pi[i] + log_obs(0, i)
 
-            dp.append(current_scores)
-            backpointer.append(current_backpointers)
+        # Recursion
+        for t in range(1, T):
+            for j in range(n):
+                candidates = delta[t - 1] + log_A[:, j]  # shape (7,)
+                psi[t, j]   = np.argmax(candidates)
+                delta[t, j] = candidates[psi[t, j]] + log_obs(t, j)
 
         # Traceback
-        best_last = max(dp[-1], key=dp[-1].get)
-        path = [best_last]
-        for t in range(len(melody_by_measure) - 1, 0, -1):
-            prev = backpointer[t][path[-1]]
-            if prev is None:
-                break
-            path.append(prev)
+        path = np.zeros(T, dtype=int)
+        path[T - 1] = np.argmax(delta[T - 1])
+        for t in range(T - 2, -1, -1):
+            path[t] = psi[t + 1, path[t + 1]]
 
-        path.reverse()
-        return path
+        return [states[i] for i in path]
 
-    def k_best_viterbi(self, observations: list[int], k: int) -> list[tuple[float, list[int]]]:
-        """Return the k most likely state sequences (lazy beam approximation)."""
-        raise NotImplementedError
+    # ── Persistence ──────────────────────────────────────────────────────────
+
+    def save(self, path: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "pi_major":  self.pi_major.tolist(),
+            "pi_minor":  self.pi_minor.tolist(),
+            "A_major":   self.A_major.tolist(),
+            "A_minor":   self.A_minor.tolist(),
+            "emissions": self.emissions,
+        }
+        with open(path, "w") as f:
+            json.dump(data, f)
+        print(f"HMM saved to {path}")
+
+    @classmethod
+    def load(cls, path: str) -> "HMM":
+        with open(path) as f:
+            data = json.load(f)
+        return cls(
+            pi_major  = np.array(data["pi_major"]),
+            pi_minor  = np.array(data["pi_minor"]),
+            A_major   = np.array(data["A_major"]),
+            A_minor   = np.array(data["A_minor"]),
+            emissions = data["emissions"],
+        )
