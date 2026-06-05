@@ -4,3 +4,6 @@
 [submodule "data/raw/nottingham-dataset"]
 	path = data/raw/nottingham-dataset
 	url = https://github.com/jukedeck/nottingham-dataset.git
+[submodule "data/raw/free-midi-chords"]
+	path = data/raw/free-midi-chords
+	url = https://github.com/ldrolez/free-midi-chords.git

@@ -1,13 +1,11 @@
-"""HMM inference — Viterbi (1-best) and k-best decoding, implemented from scratch.
-
-No external HMM libraries are used. All matrix operations use numpy only.
-"""
+"""HMM inference — Viterbi decoding implemented from scratch using numpy."""
 
 from __future__ import annotations
 import numpy as np
 from harmonizer.chord_vocab import get_chords_for_key
 from harmonizer.emissions import emission_score
 from harmonizer.transitions import transition_score
+
 
 class HMM:
     """Discrete Hidden Markov Model.
@@ -22,11 +20,29 @@ class HMM:
         self.pi = pi
         self.A = A
         self.B = B
-        self.N = A.shape[0]  # number of hidden states
-        self.M = B.shape[1]  # observation vocabulary size
+        self.N = A.shape[0]
+        self.M = B.shape[1]
 
-    def viterbi_harmonize(melody_by_measure: list[list[int]], key: str = "C_major") -> list[str]:
-        """Predict one chord per measure using a simple HMM/Viterbi algorithm."""
+    @staticmethod
+    def viterbi_harmonize(
+        melody_by_measure: list[list[int]],
+        key: str = "C_major",
+        learned_probs: dict | None = None,
+        learned_emissions: dict | None = None,
+    ) -> list[str]:
+        """Predict one chord per measure using the Viterbi algorithm.
+
+        Args:
+            melody_by_measure: List of measures; each measure is a list of
+                               pitch classes (0–11).
+            key:               Key to harmonize in, e.g. "G_major", "D_minor".
+            learned_probs:     Optional data-driven transition probabilities from
+                               train_transitions.learn_transitions(). Uses
+                               music-theory weights when None.
+
+        Returns:
+            List of chord label strings, one per measure.
+        """
         states, scale_pcs = get_chords_for_key(key)
 
         if not melody_by_measure:
@@ -35,62 +51,54 @@ class HMM:
         dp: list[dict[str, float]] = []
         backpointer: list[dict[str, str | None]] = []
 
-        first_scores: dict[str, float] = {}
-        first_backpointers: dict[str, str | None] = {}
-
-        for state in states:
-            first_scores[state] = emission_score(melody_by_measure[0], state, scale_pcs)
-            first_backpointers[state] = None
-
+        # Initialise with emission scores only (no prior transition)
+        first_scores = {
+            state: emission_score(melody_by_measure[0], state, scale_pcs, learned_emissions)
+            for state in states
+        }
         dp.append(first_scores)
-        backpointer.append(first_backpointers)
+        backpointer.append({state: None for state in states})
 
-        for time_step in range(1, len(melody_by_measure)):
+        for t in range(1, len(melody_by_measure)):
             current_scores: dict[str, float] = {}
             current_backpointers: dict[str, str | None] = {}
+            current_emission = {
+                state: emission_score(melody_by_measure[t], state, scale_pcs, learned_emissions)
+                for state in states
+            }
 
-            for current_state in states:
+            for curr in states:
                 best_score = -1.0
-                best_previous_state: str | None = None
-                current_emission = emission_score(melody_by_measure[time_step], current_state, scale_pcs)
+                best_prev: str | None = None
 
-                for previous_state in states:
-                    candidate_score = (
-                        dp[time_step - 1][previous_state]
-                        * transition_score(previous_state, current_state, key)
-                        * current_emission
+                for prev in states:
+                    score = (
+                        dp[t - 1][prev]
+                        * transition_score(prev, curr, key, learned_probs)
+                        * current_emission[curr]
                     )
+                    if score > best_score:
+                        best_score = score
+                        best_prev = prev
 
-                    if candidate_score > best_score:
-                        best_score = candidate_score
-                        best_previous_state = previous_state
-
-                current_scores[current_state] = best_score
-                current_backpointers[current_state] = best_previous_state
+                current_scores[curr] = best_score
+                current_backpointers[curr] = best_prev
 
             dp.append(current_scores)
             backpointer.append(current_backpointers)
 
-        best_last_state = max(dp[-1], key=dp[-1].get)
-        best_path = [best_last_state]
-
-        for time_step in range(len(melody_by_measure) - 1, 0, -1):
-            previous_state = backpointer[time_step][best_path[-1]]
-            if previous_state is None:
+        # Traceback
+        best_last = max(dp[-1], key=dp[-1].get)
+        path = [best_last]
+        for t in range(len(melody_by_measure) - 1, 0, -1):
+            prev = backpointer[t][path[-1]]
+            if prev is None:
                 break
-            best_path.append(previous_state)
+            path.append(prev)
 
-        best_path.reverse()
-        return best_path
+        path.reverse()
+        return path
 
     def k_best_viterbi(self, observations: list[int], k: int) -> list[tuple[float, list[int]]]:
-        """Return the k most likely state sequences (lazy beam approximation).
-
-        Args:
-            observations: List of integer observation indices.
-            k: Number of best paths to return.
-
-        Returns:
-            List of (log_probability, state_sequence) tuples, best-first.
-        """
+        """Return the k most likely state sequences (lazy beam approximation)."""
         raise NotImplementedError
