@@ -68,10 +68,10 @@ MINOR_SCALE_INTERVALS: list[int] = [0, 2, 3, 5, 7, 8, 10]
 
 # Diatonic triad quality per scale degree (I–VII)
 MAJOR_DIATONIC_QUALITIES: list[str] = ["maj", "min", "min", "maj", "maj", "min", "dim"]
-MINOR_DIATONIC_QUALITIES: list[str] = ["min", "dim", "maj", "min", "min", "maj", "maj"]
+MINOR_DIATONIC_QUALITIES: list[str] = ["min", "dim", "maj", "min", "maj", "maj", "maj"]
 
 MAJOR_ROMAN_NUMERALS: list[str] = ["I", "ii", "iii", "IV", "V", "vi", "vii°"]
-MINOR_ROMAN_NUMERALS: list[str] = ["i", "ii°", "III", "iv", "v", "VI", "VII"]
+MINOR_ROMAN_NUMERALS: list[str] = ["i", "ii°", "III", "iv", "V", "VI", "VII"]
 
 # Common functional chord progressions expressed as Roman numerals
 MAJOR_ROMAN_TRANSITIONS: dict[str, list[str]] = {
@@ -85,12 +85,12 @@ MAJOR_ROMAN_TRANSITIONS: dict[str, list[str]] = {
 }
 
 MINOR_ROMAN_TRANSITIONS: dict[str, list[str]] = {
-    "i":   ["iv", "v", "VI"],
-    "ii°": ["v"],
+    "i":   ["iv", "V", "VI"],
+    "ii°": ["V"],
     "III": ["VI", "iv"],
-    "iv":  ["v", "i"],
-    "v":   ["i", "VI"],
-    "VI":  ["iv", "ii°", "v", "i"],
+    "iv":  ["V", "i"],
+    "V":   ["i", "VI"],
+    "VI":  ["iv", "ii°", "V", "i"],
     "VII": ["III"],
 }
 
