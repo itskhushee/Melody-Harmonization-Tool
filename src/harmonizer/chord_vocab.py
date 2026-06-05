@@ -2,9 +2,7 @@
 
 Each chord is represented as a root pitch class (0–11) plus a quality.
 The full vocabulary covers all 12 roots × 3 triad qualities
-(major, minor, diminished) plus a no-chord token "N". For the first HMM
-demo, the model should use the key-specific C major chord set rather than
-the full vocabulary.
+(major, minor, diminished) plus a no-chord token "N".
 
 When parsing POP909 annotations, extended qualities are folded into their
 closest supported triad quality.
@@ -29,11 +27,9 @@ from __future__ import annotations
 
 ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# Now supporting major, minor, and diminished triads
 QUALITIES = ["maj", "min", "dim"]
 
-# Full chord vocabulary: all root × quality combinations + no-chord token
-# 12 roots × 3 qualities = 36 chords + N = 37 states
+# Full chord vocabulary: 12 roots × 3 qualities + no-chord token = 37 states
 CHORD_VOCAB: list[str] = [f"{r}:{q}" for r in ROOTS for q in QUALITIES] + ["N"]
 
 # Pitch classes (semitones above root) for each quality
@@ -65,6 +61,105 @@ POP909_ROOT_MAP: dict[str, str] = {
     "Bb": "A#", "B#": "C",  "E#": "F",
 }
 
+# ── Key / mode data ───────────────────────────────────────────────────────────
+
+MAJOR_SCALE_INTERVALS: list[int] = [0, 2, 4, 5, 7, 9, 11]
+MINOR_SCALE_INTERVALS: list[int] = [0, 2, 3, 5, 7, 8, 10]
+
+# Diatonic triad quality per scale degree (I–VII)
+MAJOR_DIATONIC_QUALITIES: list[str] = ["maj", "min", "min", "maj", "maj", "min", "dim"]
+MINOR_DIATONIC_QUALITIES: list[str] = ["min", "dim", "maj", "min", "min", "maj", "maj"]
+
+MAJOR_ROMAN_NUMERALS: list[str] = ["I", "ii", "iii", "IV", "V", "vi", "vii°"]
+MINOR_ROMAN_NUMERALS: list[str] = ["i", "ii°", "III", "iv", "v", "VI", "VII"]
+
+# Common functional chord progressions expressed as Roman numerals
+MAJOR_ROMAN_TRANSITIONS: dict[str, list[str]] = {
+    "I":    ["IV", "V", "vi"],
+    "ii":   ["V"],
+    "iii":  ["vi", "IV"],
+    "IV":   ["V", "I"],
+    "V":    ["I", "vi"],
+    "vi":   ["IV", "ii", "V", "I"],
+    "vii°": ["I"],
+}
+
+MINOR_ROMAN_TRANSITIONS: dict[str, list[str]] = {
+    "i":   ["iv", "v", "VI"],
+    "ii°": ["v"],
+    "III": ["VI", "iv"],
+    "iv":  ["v", "i"],
+    "v":   ["i", "VI"],
+    "VI":  ["iv", "ii°", "v", "i"],
+    "VII": ["III"],
+}
+
+
+# ── Key helpers ───────────────────────────────────────────────────────────────
+
+def _parse_key(key: str) -> tuple[int, str]:
+    """Parse 'G_major' → (7, 'major') or 'F#_minor' → (6, 'minor')."""
+    root_str, mode = key.rsplit("_", 1)
+    if root_str not in ROOTS:
+        raise ValueError(f"Unknown root: {root_str!r}")
+    if mode not in ("major", "minor"):
+        raise ValueError(f"Unknown mode: {mode!r} — expected 'major' or 'minor'")
+    return ROOTS.index(root_str), mode
+
+
+def get_chords_for_key(key: str) -> tuple[list[str], set[int]]:
+    """Return diatonic chord labels and scale pitch classes for any key.
+
+    Args:
+        key: e.g. "C_major", "G_major", "F#_minor"
+
+    Returns:
+        (chord_labels, scale_pcs) — 7 diatonic chords + set of 7 pitch classes.
+    """
+    root_pc, mode = _parse_key(key)
+    intervals = MAJOR_SCALE_INTERVALS if mode == "major" else MINOR_SCALE_INTERVALS
+    qualities = MAJOR_DIATONIC_QUALITIES if mode == "major" else MINOR_DIATONIC_QUALITIES
+
+    scale_pcs = {(root_pc + i) % 12 for i in intervals}
+    chord_labels = [
+        f"{ROOTS[(root_pc + i) % 12]}:{q}"
+        for i, q in zip(intervals, qualities)
+    ]
+    return chord_labels, scale_pcs
+
+
+def get_roman_map_for_key(key: str) -> dict[str, str]:
+    """Return Roman numeral → chord label mapping for any key.
+
+    Args:
+        key: e.g. "C_major", "D_minor"
+
+    Returns:
+        e.g. {"I": "C:maj", "ii": "D:min", ...} for C_major
+    """
+    root_pc, mode = _parse_key(key)
+    intervals = MAJOR_SCALE_INTERVALS if mode == "major" else MINOR_SCALE_INTERVALS
+    qualities = MAJOR_DIATONIC_QUALITIES if mode == "major" else MINOR_DIATONIC_QUALITIES
+    romans = MAJOR_ROMAN_NUMERALS if mode == "major" else MINOR_ROMAN_NUMERALS
+
+    return {
+        roman: f"{ROOTS[(root_pc + i) % 12]}:{q}"
+        for roman, i, q in zip(romans, intervals, qualities)
+    }
+
+
+def get_chord_to_roman_map_for_key(key: str) -> dict[str, str]:
+    """Return chord label → Roman numeral mapping for any key."""
+    return {chord: roman for roman, chord in get_roman_map_for_key(key).items()}
+
+
+def get_roman_transitions_for_key(key: str) -> dict[str, list[str]]:
+    """Return the functional transition table for a key's mode."""
+    _, mode = _parse_key(key)
+    return MAJOR_ROMAN_TRANSITIONS if mode == "major" else MINOR_ROMAN_TRANSITIONS
+
+
+# ── Chord utilities ───────────────────────────────────────────────────────────
 
 def normalize_pop909_label(raw: str) -> str:
     """Convert a POP909 chord label to internal format.
@@ -77,7 +172,6 @@ def normalize_pop909_label(raw: str) -> str:
     """
     if raw in ("N", "X"):
         return "N"
-    # Strip slash (bass note) if present
     raw = raw.split("/")[0]
     root_str, quality_str = raw.split(":")
     root = POP909_ROOT_MAP.get(root_str, root_str)
@@ -85,85 +179,11 @@ def normalize_pop909_label(raw: str) -> str:
     return f"{root}:{quality}"
 
 
-# C major diatonic triads: I, ii, iii, IV, V, vi, vii°
-C_MAJOR_BASELINE_CHORDS: list[str] = ["C:maj", "D:min", "E:min", "F:maj", "G:maj", "A:min", "B:dim"]
-C_MINOR_BASELINE_CHORDS: list[str] = ["C:min", "D:min", "D#:maj", "F:min", "G:min", "G#:maj", "A#:maj"]
-
-# Scale pitch classes for scoring melody notes against the selected key.
-C_MAJOR_SCALE_PCS: set[int] = {0, 2, 4, 5, 7, 9, 11}
-C_MINOR_SCALE_PCS: set[int] = {0, 2, 3, 5, 7, 8, 10, 11}
-
-# Roman numeral mappings for the first C major HMM demo.
-# These let transition probabilities be defined musically, e.g. I -> IV -> V -> I.
-C_MAJOR_ROMAN_TO_CHORD: dict[str, str] = {
-    "I": "C:maj",
-    "ii": "D:min",
-    "iii": "E:min",
-    "IV": "F:maj",
-    "V": "G:maj",
-    "vi": "A:min",
-    "vii°": "B:dim",
-}
-
-C_MAJOR_CHORD_TO_ROMAN: dict[str, str] = {
-    chord: roman for roman, chord in C_MAJOR_ROMAN_TO_CHORD.items()
-}
-
-
-def get_chords_for_key(key: str) -> tuple[list[str], set[int]]:
-    """Return baseline chord labels and scale pitch classes for a supported key.
-
-    Args:
-        key: Currently "C_major" or "C_minor".
-
-    Returns:
-        A tuple of (chord labels, scale pitch classes).
-    """
-    if key == "C_major":
-        return C_MAJOR_BASELINE_CHORDS, C_MAJOR_SCALE_PCS
-
-    if key == "C_minor":
-        return C_MINOR_BASELINE_CHORDS, C_MINOR_SCALE_PCS
-
-    raise ValueError(f"Unsupported key: {key}")
-
-
-# Roman numeral mapping helpers
-def get_roman_map_for_key(key: str) -> dict[str, str]:
-    """Return Roman numeral to chord-label mapping for a supported key.
-
-    Args:
-        key: Currently "C_major".
-
-    Returns:
-        A dictionary mapping Roman numerals to internal chord labels.
-    """
-    if key == "C_major":
-        return C_MAJOR_ROMAN_TO_CHORD
-
-    raise ValueError(f"Roman numeral mapping is not implemented for key: {key}")
-
-
-def get_chord_to_roman_map_for_key(key: str) -> dict[str, str]:
-    """Return chord-label to Roman numeral mapping for a supported key.
-
-    Args:
-        key: Currently "C_major".
-
-    Returns:
-        A dictionary mapping internal chord labels to Roman numerals.
-    """
-    if key == "C_major":
-        return C_MAJOR_CHORD_TO_ROMAN
-
-    raise ValueError(f"Roman numeral mapping is not implemented for key: {key}")
-
-
 def chord_pitch_classes(chord_label: str) -> set[int]:
     """Return the set of pitch classes (mod 12) for a chord label.
 
     Args:
-        chord_label: e.g. "C:maj", "G:dom7", or "N"
+        chord_label: e.g. "C:maj", "G:min", or "N"
 
     Returns:
         Set of pitch class integers (empty set for "N").
@@ -176,34 +196,16 @@ def chord_pitch_classes(chord_label: str) -> set[int]:
 
 
 def chord_index(chord_label: str, key: str | None = None) -> int:
-    """Return index of a chord in the full vocabulary or selected key vocabulary.
+    """Return index of a chord in the full vocabulary or a key-specific vocabulary.
 
     Args:
         chord_label: Internal chord label, such as "C:maj" or "B:dim".
-        key: If provided, use the key-specific chord list, e.g. "C_major".
+        key: If provided, index into that key's 7-chord list, e.g. "G_major".
 
     Returns:
         Integer index of the chord.
     """
     if key is None:
         return CHORD_VOCAB.index(chord_label)
-
     chords, _ = get_chords_for_key(key)
     return chords.index(chord_label)
-
-
-# Temporary C-major HMM helpers for quick testing.
-# These can be moved into emissions.py, transitions.py, and hmm.py later.
-COMMON_ROMAN_TRANSITIONS: dict[str, list[str]] = {
-    "I": ["IV", "V", "vi"],
-    "ii": ["V"],
-    "iii": ["vi", "IV"],
-    "IV": ["V", "I"],
-    "V": ["I", "vi"],
-    "vi": ["IV", "ii", "V", "I"],
-    "vii°": ["I"],
-}
-
-
-
-
