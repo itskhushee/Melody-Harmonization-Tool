@@ -161,6 +161,22 @@ def get_roman_transitions_for_key(key: str) -> dict[str, list[str]]:
 
 # ── Chord utilities ───────────────────────────────────────────────────────────
 
+def pop909_key_to_internal(key_line: str) -> str:
+    """Convert a POP909 key_audio.txt line to internal key format.
+
+    Args:
+        key_line: e.g. "2.67  191.98  Gb:maj"
+
+    Returns:
+        Internal key string e.g. "F#_major"
+    """
+    raw = key_line.strip().split()[-1]  # last token e.g. "Gb:maj"
+    root_str, mode_str = raw.split(":")
+    root = POP909_ROOT_MAP.get(root_str, root_str)
+    mode = "major" if mode_str == "maj" else "minor"
+    return f"{root}_{mode}"
+
+
 def normalize_pop909_label(raw: str) -> str:
     """Convert a POP909 chord label to internal format.
 

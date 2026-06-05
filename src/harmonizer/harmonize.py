@@ -9,19 +9,28 @@ from harmonizer.midi_parser import midi_to_melody_by_measure
 from harmonizer.midi_io import save_harmonized
 
 
-def harmonize_midi(input_path: str, output_path: str, key: str = "C_major") -> list[str]:
+def harmonize_midi(
+    input_path: str,
+    output_path: str,
+    key: str = "C_major",
+    learned_probs: dict | None = None,
+    learned_emissions: dict | None = None,
+) -> list[str]:
     """Full pipeline: melody MIDI in → predict chords → two-track MIDI out.
 
     Args:
-        input_path:  Path to a monophonic melody .mid file.
-        output_path: Where to write the harmonized .mid file.
-        key:         Key to harmonize in, e.g. "C_major", "G_minor".
+        input_path:    Path to a monophonic melody .mid file.
+        output_path:   Where to write the harmonized .mid file.
+        key:           Key to harmonize in, e.g. "C_major", "G_minor".
+        learned_probs: Optional data-driven transition probabilities from
+                       train_transitions.load_transitions(). Falls back to
+                       music-theory weights when None.
 
     Returns:
         List of predicted chord labels (one per measure).
     """
     melody_by_measure = midi_to_melody_by_measure(input_path)
-    chord_labels = HMM.viterbi_harmonize(melody_by_measure, key=key)
+    chord_labels = HMM.viterbi_harmonize(melody_by_measure, key=key, learned_probs=learned_probs, learned_emissions=learned_emissions)
     save_harmonized(output_path, input_path, chord_labels)
     return chord_labels
 

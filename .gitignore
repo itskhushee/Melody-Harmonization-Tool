@@ -16,10 +16,15 @@ env/
 data/processed/*
 !data/processed/.gitkeep
 
+# Generated output MIDIs
+data/output/
+
 # Models
-models/
 *.pkl
 *.npy
+models/
+!models/transitions.json
+!models/emissions.json
 
 # Jupyter
 .ipynb_checkpoints/
