@@ -25,6 +25,7 @@ data/output/
 models/
 !models/transitions.json
 !models/emissions.json
+!models/hmm.json
 
 # Jupyter
 .ipynb_checkpoints/
