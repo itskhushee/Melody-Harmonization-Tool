@@ -4,30 +4,43 @@ from __future__ import annotations
 import pickle
 import numpy as np
 from harmonizer.hmm import HMM
-from harmonizer.chord_vocab import CHORD_VOCAB, get_chords_for_key, chord_pitch_classes
-from harmonizer.midi_io import load_melody
+from harmonizer.chord_vocab import get_chords_for_key, chord_pitch_classes
+from harmonizer.midi_parser import midi_to_melody_by_measure
+from harmonizer.midi_io import save_harmonized
 
 
-def build_baseline_hmm(key: str) -> tuple[HMM, list[str]]:
-    """Build a placeholder HMM for a key using music-theory emission probabilities.
-
-    Parameters (A, pi) are uniform placeholders — they will be replaced by
-    train.py once the labeled dataset is ready. Only B is meaningful here.
+def harmonize_midi(input_path: str, output_path: str, key: str = "C_major") -> list[str]:
+    """Full pipeline: melody MIDI in → predict chords → two-track MIDI out.
 
     Args:
-        key: "C_major" or "C_minor".
+        input_path:  Path to a monophonic melody .mid file.
+        output_path: Where to write the harmonized .mid file.
+        key:         Key to harmonize in, e.g. "C_major", "G_minor".
 
     Returns:
-        Tuple of (HMM, chord_labels) where chord_labels[i] is the name of state i.
+        List of predicted chord labels (one per measure).
+    """
+    melody_by_measure = midi_to_melody_by_measure(input_path)
+    chord_labels = HMM.viterbi_harmonize(melody_by_measure, key=key)
+    save_harmonized(output_path, input_path, chord_labels)
+    return chord_labels
+
+
+# ── Utilities kept for future trained-model support ───────────────────────────
+
+def build_baseline_hmm(key: str) -> tuple[HMM, list[str]]:
+    """Build a placeholder HMM using music-theory emission probabilities.
+
+    A and pi are uniform placeholders; only B is meaningful here.
+    Replace with estimate_parameters() once a labeled corpus is ready.
     """
     chord_labels, _ = get_chords_for_key(key)
     N = len(chord_labels)
-    M = 12  # pitch classes 0–11
+    M = 12
 
     pi = np.full(N, 1.0 / N)
     A  = np.full((N, N), 1.0 / N)
 
-    # Chord tones share 0.9 of the probability; non-chord tones share 0.1
     B = np.zeros((N, M))
     for i, label in enumerate(chord_labels):
         in_chord  = chord_pitch_classes(label)
@@ -48,19 +61,3 @@ def load_model(path: str) -> HMM:
 def save_model(model: HMM, path: str) -> None:
     with open(path, "wb") as f:
         pickle.dump(model, f)
-
-
-def harmonize(model: HMM, midi_path: str) -> list[str]:
-    """Run the full pipeline: parse MIDI → Viterbi decode → chord labels.
-
-    Args:
-        model: Trained HMM.
-        midi_path: Path to a monophonic .mid file.
-
-    Returns:
-        List of chord label strings (one per melody note).
-    """
-    pitches = load_melody(midi_path)
-    observations = [p % 12 for p in pitches]
-    state_indices = model.viterbi(observations)
-    return [CHORD_VOCAB[i] for i in state_indices]
