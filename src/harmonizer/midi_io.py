@@ -44,16 +44,22 @@ def _voice_chord(root_pc: int, pcs: set[int], base: int = 48) -> list[int]:
     return sorted(notes)
 
 
-def save_harmonized(output_path: str, input_midi_path: str, chord_labels: list[str]) -> None:
+def save_harmonized(
+    output_path: str,
+    input_midi_path: str,
+    chord_labels: list[str],
+    granularity: str = "beat",
+) -> None:
     """Write a two-track MIDI: original melody + chord accompaniment.
 
     Track 0 — original melody (copied from input).
-    Track 1 — predicted chords, one per measure, voiced in octave 3–4.
+    Track 1 — predicted chords voiced in octave 3–4.
 
     Args:
         output_path:     Where to write the .mid file.
         input_midi_path: Original melody MIDI (used for melody track + timing).
-        chord_labels:    One chord label per measure from viterbi_harmonize().
+        chord_labels:    Chord labels from viterbi_harmonize().
+        granularity:     "beat" (one chord per beat) or "measure" (one per measure).
     """
     original = MidiFile(input_midi_path)
     out = MidiFile(ticks_per_beat=original.ticks_per_beat, type=1)
@@ -64,19 +70,18 @@ def save_harmonized(output_path: str, input_midi_path: str, chord_labels: list[s
 
     # ── Track 1: chord accompaniment ─────────────────────────────────────────
     numerator, _ = _get_time_signature(original)
-    ticks_per_measure = original.ticks_per_beat * numerator
+    ticks_per_beat = original.ticks_per_beat
+    ticks_per_chord = ticks_per_beat if granularity == "beat" else ticks_per_beat * numerator
 
     chord_track = MidiTrack()
     out.tracks.append(chord_track)
-
-    # Use channel 1, acoustic piano
     chord_track.append(Message("program_change", program=0, channel=1, time=0))
 
     prev_tick = 0
 
     for i, label in enumerate(chord_labels):
-        start_tick = i * ticks_per_measure
-        end_tick   = start_tick + ticks_per_measure
+        start_tick = i * ticks_per_chord
+        end_tick   = start_tick + ticks_per_chord
 
         if label == "N":
             prev_tick = end_tick
@@ -87,13 +92,11 @@ def save_harmonized(output_path: str, input_midi_path: str, chord_labels: list[s
         pcs      = chord_pitch_classes(label)
         notes    = _voice_chord(root_pc, pcs)
 
-        # note_on events
         for j, note in enumerate(notes):
             delta = (start_tick - prev_tick) if j == 0 else 0
             chord_track.append(Message("note_on", note=note, velocity=60, channel=1, time=delta))
             prev_tick = start_tick
 
-        # note_off events
         for j, note in enumerate(notes):
             delta = (end_tick - prev_tick) if j == 0 else 0
             chord_track.append(Message("note_off", note=note, velocity=0, channel=1, time=delta))

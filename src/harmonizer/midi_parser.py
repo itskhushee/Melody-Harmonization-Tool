@@ -131,3 +131,43 @@ def midi_to_melody_by_measure(
     max_measure = max(measures.keys())
 
     return [measures[i] for i in range(max_measure + 1)]
+
+
+def midi_to_melody_by_beat(
+    midi_path: str | Path,
+    track_index: int | None = None,
+) -> list[list[int]]:
+    """Convert a MIDI melody track into beat-level pitch-class observations.
+
+    Same as midi_to_melody_by_measure but groups notes by individual beat
+    (ticks_per_beat) instead of full measure. This gives finer granularity
+    for chord prediction and better alignment with chord annotations.
+
+    Args:
+        midi_path:   Path to a .mid file.
+        track_index: Track to parse. If None, a likely melody track is selected.
+
+    Returns:
+        List of beats, where each beat is a list of pitch classes.
+    """
+    midi_path = Path(midi_path)
+    mid = MidiFile(midi_path)
+    ticks_per_beat = mid.ticks_per_beat
+
+    if track_index is None:
+        track_index = _choose_melody_track(mid)
+
+    notes = _extract_notes_from_track(mid.tracks[track_index])
+
+    beats: dict[int, list[int]] = defaultdict(list)
+    for start_tick, midi_note in notes:
+        beat_index = start_tick // ticks_per_beat
+        pitch_class = midi_note % 12
+        if pitch_class not in beats[beat_index]:
+            beats[beat_index].append(pitch_class)
+
+    if not beats:
+        return []
+
+    max_beat = max(beats.keys())
+    return [beats[i] for i in range(max_beat + 1)]
