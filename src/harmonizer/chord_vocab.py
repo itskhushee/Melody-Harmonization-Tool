@@ -161,17 +161,36 @@ def get_roman_transitions_for_key(key: str) -> dict[str, list[str]]:
 
 # ── Chord utilities ───────────────────────────────────────────────────────────
 
-def pop909_key_to_internal(key_line: str) -> str:
-    """Convert a POP909 key_audio.txt line to internal key format.
+def pop909_key_to_internal(key_file_text: str) -> str:
+    """Return the dominant key from a POP909 key_audio.txt file.
+
+    Picks the key label with the longest total time span across all segments,
+    rather than the last line — robust to songs with short modulations.
 
     Args:
-        key_line: e.g. "2.67  191.98  Gb:maj"
+        key_file_text: Full text content of a key_audio.txt file.
+                       Each line: start_time  end_time  Root:quality
 
     Returns:
-        Internal key string e.g. "F#_major"
+        Internal key string e.g. "F#_major", "C_minor"
     """
-    raw = key_line.strip().split()[-1]  # last token e.g. "Gb:maj"
-    root_str, mode_str = raw.split(":")
+    durations: dict[str, float] = {}
+    for line in key_file_text.strip().splitlines():
+        parts = line.strip().split()
+        if len(parts) < 3:
+            continue
+        try:
+            start, end = float(parts[0]), float(parts[1])
+        except ValueError:
+            continue
+        label = parts[2]
+        durations[label] = durations.get(label, 0.0) + (end - start)
+
+    if not durations:
+        return "C_major"
+
+    dominant = max(durations, key=durations.__getitem__)
+    root_str, mode_str = dominant.split(":")
     root = POP909_ROOT_MAP.get(root_str, root_str)
     mode = "major" if mode_str == "maj" else "minor"
     return f"{root}_{mode}"

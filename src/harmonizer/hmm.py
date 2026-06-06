@@ -69,12 +69,14 @@ class HMM:
                 B[i, int(pc_str)] = prob
         log_B = np.log(B + 1e-10)            # shape (7, 12)
 
-        # ── Helper: average log-emission over all notes in a measure ─────────
+        # ── Helper: sum log-emissions for all notes in a measure ────────────
+        # Sum = joint log-probability (notes i.i.d. given chord).
+        # More discriminative than averaging: longer measures give more signal.
         def log_obs(t: int, state_idx: int) -> float:
             notes = melody_by_measure[t]
             if not notes:
                 return 0.0
-            return sum(log_B[state_idx, pc % 12] for pc in notes) / len(notes)
+            return sum(log_B[state_idx, pc % 12] for pc in notes)
 
         # ── Viterbi DP ────────────────────────────────────────────────────────
         delta = np.full((T, n), -np.inf)
