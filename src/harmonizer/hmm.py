@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import numpy as np
 from pathlib import Path
-from harmonizer.chord_vocab import get_chords_for_key
+from harmonizer.chord_vocab import get_chords_for_key, chord_pitch_classes
 
 
 class HMM:
@@ -32,6 +32,54 @@ class HMM:
         self.A_minor   = A_minor
         self.emissions = emissions
 
+    @staticmethod
+    def _fill_empty_beats(melody: list[list[int]], window: int = 4) -> list[list[int]]:
+        """Fill empty beats by borrowing from the nearest non-empty neighbor.
+
+        A beat with no melody notes contributes uniform emission to Viterbi,
+        effectively letting the transition prior dominate. Borrowing from the
+        adjacent beat (sustaining note context) gives the decoder real signal.
+        """
+        n = len(melody)
+        filled = []
+        for i, beat in enumerate(melody):
+            if beat:
+                filled.append(beat)
+                continue
+            context: list[int] = []
+            for offset in range(1, window + 1):
+                if i - offset >= 0 and melody[i - offset]:
+                    context = list(melody[i - offset])
+                    break
+            if not context:
+                for offset in range(1, window + 1):
+                    if i + offset < n and melody[i + offset]:
+                        context = list(melody[i + offset])
+                        break
+            filled.append(context)
+        return filled
+
+    @staticmethod
+    def _smooth_predictions(chords: list[str]) -> list[str]:
+        """Remove passing-tone blips from Viterbi output.
+
+        Replaces any run of 1 beat that is sandwiched between the same chord
+        on both sides (A → B → A pattern). This removes artefacts caused by
+        melody passing tones without collapsing neighbouring chord changes.
+        Runs multiple passes until no more X→Y→X patterns remain.
+        """
+        result = list(chords)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(1, len(result) - 1):
+                if result[i] != result[i - 1] and result[i] == result[i - 1]:
+                    pass  # never true — placeholder avoided
+                if result[i - 1] == result[i + 1] and result[i] != result[i - 1]:
+                    result[i] = result[i - 1]
+                    changed = True
+        return result
+
     def viterbi_harmonize(
         self,
         melody_by_measure: list[list[int]],
@@ -47,6 +95,7 @@ class HMM:
         Returns:
             List of chord label strings, one per measure.
         """
+        melody_by_measure = self._fill_empty_beats(melody_by_measure)
         states, _ = get_chords_for_key(key)
         _, mode   = key.rsplit("_", 1)
         n = len(states)
@@ -67,9 +116,21 @@ class HMM:
         for i, chord in enumerate(states):
             for pc_str, prob in self.emissions.get(chord, {}).items():
                 B[i, int(pc_str)] = prob
+
+        # Boost chord tones so that non-matching observations more strongly
+        # rule out wrong chords. Diatonic chords share scale tones, so without
+        # this boost the B rows are too similar and the transition prior wins.
+        # Value of 3.0 comes from empirical grid search; higher values cause
+        # excess chord changes by over-reacting to passing tones.
+        _CHORD_TONE_BOOST = 3.0
+        for i, chord in enumerate(states):
+            for pc in chord_pitch_classes(chord):
+                B[i, pc] *= _CHORD_TONE_BOOST
+        B /= B.sum(axis=1, keepdims=True)
+
         log_B = np.log(B + 1e-10)            # shape (7, 12)
 
-        # ── Helper: average log-emission over all notes in a measure ─────────
+        # ── Helper: average log-emission over all notes in a beat ────────────
         def log_obs(t: int, state_idx: int) -> float:
             notes = melody_by_measure[t]
             if not notes:
@@ -97,7 +158,7 @@ class HMM:
         for t in range(T - 2, -1, -1):
             path[t] = psi[t + 1, path[t + 1]]
 
-        return [states[i] for i in path]
+        return self._smooth_predictions([states[i] for i in path])
 
     # ── Persistence ──────────────────────────────────────────────────────────
 

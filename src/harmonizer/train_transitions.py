@@ -201,7 +201,14 @@ def train_hmm(
     A_major,  A_minor  = build_A_matrices(probs)
 
     print("Learning B from free-midi-chords...")
-    emissions = learn_emissions(midi_files_dir)
+    free_midi_emissions = learn_emissions(midi_files_dir)
+
+    print("Learning B from POP909 melody data...")
+    from harmonizer.train_emissions import learn_emissions_from_pop909, combine_emissions
+    pop909_emissions = learn_emissions_from_pop909(pop909_dir, train_ids)
+
+    print("Combining emissions (50% POP909, 50% free-midi-chords)...")
+    emissions = combine_emissions(free_midi_emissions, pop909_emissions, pop909_weight=0.5)
 
     return HMM(pi_major, pi_minor, A_major, A_minor, emissions)
 

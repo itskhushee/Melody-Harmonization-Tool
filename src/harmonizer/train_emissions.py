@@ -111,6 +111,217 @@ def learn_emissions(
     return probs
 
 
+def learn_emissions_from_pop909(
+    pop909_dir: str,
+    train_ids: list[str],
+    smoothing: float = 0.5,
+) -> dict:
+    """Learn P(pitch_class | chord) from POP909 melody notes over chord annotations.
+
+    For each beat in each training song, aligns the melody pitch classes with
+    the annotated chord label and counts co-occurrences.
+
+    Args:
+        pop909_dir: Path to POP909/POP909/ directory.
+        train_ids:  Song IDs to learn from.
+        smoothing:  Laplace smoothing added to every pitch-class count.
+
+    Returns:
+        Dict {chord_label: {str(pitch_class): probability}}
+    """
+    from harmonizer.midi_parser import midi_to_melody_by_beat
+    from harmonizer.chord_vocab import normalize_pop909_label, pop909_key_to_internal
+
+    base = Path(pop909_dir)
+
+    # Initialise counts with smoothing
+    counts: dict[str, dict[str, float]] = {
+        chord: {str(pc): smoothing for pc in range(12)}
+        for chord in CHORD_VOCAB
+        if chord != "N"
+    }
+
+    skipped = 0
+    for song_id in train_ids:
+        song_dir = base / song_id
+        try:
+            # Melody pitch classes per beat
+            melody_by_beat = midi_to_melody_by_beat(song_dir / f"{song_id}.mid")
+
+            # Chord label per beat from annotations
+            beat_times = []
+            for line in (song_dir / "beat_midi.txt").read_text().strip().splitlines():
+                parts = line.strip().split()
+                if parts:
+                    beat_times.append(float(parts[0]))
+
+            annotations = []
+            for line in (song_dir / "chord_midi.txt").read_text().strip().splitlines():
+                parts = line.strip().split()
+                if len(parts) == 3:
+                    annotations.append((float(parts[0]), float(parts[1]), parts[2]))
+
+            n = min(len(melody_by_beat), len(beat_times))
+            for t in range(n):
+                # Find chord at this beat time
+                beat_time = beat_times[t]
+                chord = "N"
+                for start, end, label in annotations:
+                    if start <= beat_time < end:
+                        chord = normalize_pop909_label(label)
+                        break
+
+                if chord == "N" or chord not in counts:
+                    continue
+
+                for pc in melody_by_beat[t]:
+                    counts[chord][str(pc % 12)] += 1
+
+        except Exception:
+            skipped += 1
+            continue
+
+    if skipped:
+        print(f"  Skipped {skipped} songs in POP909 emission learning")
+
+    # Normalise
+    return {
+        chord: {pc: v / sum(row.values()) for pc, v in row.items()}
+        for chord, row in counts.items()
+    }
+
+
+def learn_emissions_bass_filtered(
+    pop909_dir: str,
+    train_ids: list[str],
+    smoothing: float = 0.1,
+) -> dict:
+    """Learn P(pitch_class | chord) using only bass-confirmed beats.
+
+    For each beat, the lowest note in the PIANO track (track 3) is the bass.
+    We only count melody notes when the bass pitch class matches the annotated
+    chord root — these are "solid" beats where the chord is unambiguous,
+    giving a cleaner emission signal than using all beats indiscriminately.
+
+    Args:
+        pop909_dir: Path to POP909/POP909/ directory.
+        train_ids:  Song IDs to learn from.
+        smoothing:  Laplace smoothing (lower than default since data is cleaner).
+
+    Returns:
+        Dict {chord_label: {str(pitch_class): probability}}
+    """
+    from collections import defaultdict
+    from harmonizer.midi_parser import midi_to_melody_by_beat
+    from harmonizer.chord_vocab import normalize_pop909_label, pop909_key_to_internal, ROOTS
+
+    base = Path(pop909_dir)
+
+    counts: dict[str, dict[str, float]] = {
+        chord: {str(pc): smoothing for pc in range(12)}
+        for chord in CHORD_VOCAB
+        if chord != "N"
+    }
+
+    skipped = 0
+    for song_id in train_ids:
+        song_dir = base / song_id
+        try:
+            mid = MidiFile(song_dir / f"{song_id}.mid")
+            tpb = mid.ticks_per_beat
+
+            # Melody pitch classes per beat (track 1)
+            melody_by_beat = midi_to_melody_by_beat(song_dir / f"{song_id}.mid",
+                                                     track_index=1)
+
+            # Bass note per beat: lowest note in PIANO track (track 3)
+            abs_tick = 0
+            piano_notes_by_beat: dict[int, list[int]] = defaultdict(list)
+            for msg in mid.tracks[3]:
+                abs_tick += msg.time
+                if msg.type == "note_on" and msg.velocity > 0:
+                    piano_notes_by_beat[abs_tick // tpb].append(msg.note)
+
+            beat_times = [
+                float(l.split()[0])
+                for l in (song_dir / "beat_midi.txt").read_text().strip().splitlines()
+                if l.strip()
+            ]
+            annotations = [
+                (float(p[0]), float(p[1]), p[2])
+                for l in (song_dir / "chord_midi.txt").read_text().strip().splitlines()
+                if (p := l.strip().split()) and len(p) == 3
+            ]
+
+            n = min(len(melody_by_beat), len(beat_times))
+            for t in range(n):
+                bt = beat_times[t]
+                chord = "N"
+                for start, end, label in annotations:
+                    if start <= bt < end:
+                        chord = normalize_pop909_label(label)
+                        break
+
+                if chord == "N" or chord not in counts:
+                    continue
+
+                piano_notes = piano_notes_by_beat.get(t, [])
+                if not piano_notes:
+                    continue
+
+                bass_pc = min(piano_notes) % 12
+                chord_root = chord.split(":")[0]
+                chord_root_pc = ROOTS.index(chord_root)
+
+                # Only count when bass confirms the chord root
+                if bass_pc != chord_root_pc:
+                    continue
+
+                for pc in melody_by_beat[t]:
+                    counts[chord][str(pc % 12)] += 1
+
+        except Exception:
+            skipped += 1
+            continue
+
+    if skipped:
+        print(f"  Skipped {skipped} songs in bass-filtered emission learning")
+
+    return {
+        chord: {pc: v / sum(row.values()) for pc, v in row.items()}
+        for chord, row in counts.items()
+    }
+
+
+def combine_emissions(
+    free_midi_probs: dict,
+    pop909_probs: dict,
+    pop909_weight: float = 0.7,
+) -> dict:
+    """Blend free-midi-chords and POP909 emission probabilities.
+
+    Args:
+        free_midi_probs: Emissions learned from chord voicings.
+        pop909_probs:    Emissions learned from melody-over-chord data.
+        pop909_weight:   Weight given to POP909 (melody) data (0–1).
+
+    Returns:
+        Combined emission dict.
+    """
+    free_weight = 1.0 - pop909_weight
+    combined = {}
+    all_chords = set(free_midi_probs) | set(pop909_probs)
+    for chord in all_chords:
+        free = free_midi_probs.get(chord, {})
+        pop  = pop909_probs.get(chord, {})
+        all_pcs = set(free) | set(pop)
+        combined[chord] = {
+            pc: pop909_weight * pop.get(pc, 0.0) + free_weight * free.get(pc, 0.0)
+            for pc in all_pcs
+        }
+    return combined
+
+
 def save_emissions(probs: dict, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
