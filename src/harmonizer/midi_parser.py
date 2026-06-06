@@ -58,26 +58,30 @@ def _extract_notes_from_track(track, ignore_drum_channel: bool = True) -> list[t
 def _choose_melody_track(mid: MidiFile) -> int:
     """Pick a likely melody track.
 
-    Simple heuristic:
-    - ignore tracks with no notes
-    - prefer tracks with higher average pitch
+    Strategy (in priority order):
+    1. Track whose name contains "melody" (case-insensitive) — reliable for
+       POP909 files which label their tracks explicitly.
+    2. Fallback: track with the highest average pitch among tracks that have
+       notes, with a small count bonus so tiny tracks are penalised.
     """
+    # Priority 1: explicit track name
+    for index, track in enumerate(mid.tracks):
+        if "melody" in track.name.lower():
+            notes = _extract_notes_from_track(track)
+            if notes:
+                return index
+
+    # Priority 2: highest-average-pitch heuristic
     best_track_index = 0
     best_score = float("-inf")
 
     for index, track in enumerate(mid.tracks):
         notes = _extract_notes_from_track(track)
-
         if not notes:
             continue
-
         pitches = [pitch for _, pitch in notes]
         avg_pitch = sum(pitches) / len(pitches)
-
-        # Higher notes are more likely to be melody.
-        # Add a small note-count factor so tiny tracks are less likely.
         score = avg_pitch + min(len(pitches), 100) * 0.01
-
         if score > best_score:
             best_score = score
             best_track_index = index

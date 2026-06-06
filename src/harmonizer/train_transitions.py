@@ -55,7 +55,7 @@ def _read_chord_sequence(chord_file: Path) -> list[str]:
 def learn_transitions(
     pop909_dir: str,
     train_ids: list[str],
-    smoothing: float = 1.0,
+    smoothing: float = 0.1,
 ) -> dict:
     """Learn Roman numeral transition probabilities from POP909 chord sequences.
 
@@ -121,7 +121,7 @@ def learn_transitions(
 def learn_pi(
     pop909_dir: str,
     train_ids: list[str],
-    smoothing: float = 1.0,
+    smoothing: float = 0.1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Learn initial state distribution from the first chord of each song.
 

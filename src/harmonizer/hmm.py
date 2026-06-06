@@ -34,11 +34,11 @@ class HMM:
 
     @staticmethod
     def _fill_empty_beats(melody: list[list[int]], window: int = 4) -> list[list[int]]:
-        """Fill empty beats by borrowing from the nearest non-empty neighbor.
+        """Fill empty beats by borrowing pitch classes from the nearest non-empty neighbor.
 
-        A beat with no melody notes contributes uniform emission to Viterbi,
-        effectively letting the transition prior dominate. Borrowing from the
-        adjacent beat (sustaining note context) gives the decoder real signal.
+        A beat with no notes contributes a uniform emission to Viterbi, so the
+        transition prior dominates. Borrowing from the adjacent beat gives real
+        signal and measurably improves accuracy on sparse melodies.
         """
         n = len(melody)
         filled = []
@@ -61,20 +61,17 @@ class HMM:
 
     @staticmethod
     def _smooth_predictions(chords: list[str]) -> list[str]:
-        """Remove passing-tone blips from Viterbi output.
+        """Remove single-beat blips from Viterbi output (A → B → A pattern).
 
-        Replaces any run of 1 beat that is sandwiched between the same chord
-        on both sides (A → B → A pattern). This removes artefacts caused by
-        melody passing tones without collapsing neighbouring chord changes.
-        Runs multiple passes until no more X→Y→X patterns remain.
+        Repeatedly replaces any isolated chord that is sandwiched between the
+        same chord on both sides until no more such patterns remain. This
+        suppresses passing-tone artefacts without collapsing real chord changes.
         """
         result = list(chords)
         changed = True
         while changed:
             changed = False
             for i in range(1, len(result) - 1):
-                if result[i] != result[i - 1] and result[i] == result[i - 1]:
-                    pass  # never true — placeholder avoided
                 if result[i - 1] == result[i + 1] and result[i] != result[i - 1]:
                     result[i] = result[i - 1]
                     changed = True
@@ -117,11 +114,10 @@ class HMM:
             for pc_str, prob in self.emissions.get(chord, {}).items():
                 B[i, int(pc_str)] = prob
 
-        # Boost chord tones so that non-matching observations more strongly
-        # rule out wrong chords. Diatonic chords share scale tones, so without
-        # this boost the B rows are too similar and the transition prior wins.
-        # Value of 3.0 comes from empirical grid search; higher values cause
-        # excess chord changes by over-reacting to passing tones.
+        # Boost chord tones so non-matching observations more strongly rule out
+        # wrong chords. Diatonic chords share many scale tones, so without this
+        # the B rows are too similar and the transition prior dominates.
+        # Value of 3.0 found via empirical grid search on POP909 dev set.
         _CHORD_TONE_BOOST = 3.0
         for i, chord in enumerate(states):
             for pc in chord_pitch_classes(chord):
@@ -130,25 +126,25 @@ class HMM:
 
         log_B = np.log(B + 1e-10)            # shape (7, 12)
 
-        # ── Helper: average log-emission over all notes in a beat ────────────
+        # ── Helper: sum log-emissions for all notes in a measure ────────────
+        # Sum = joint log-probability (notes i.i.d. given chord).
+        # More discriminative than averaging: longer measures give more signal.
         def log_obs(t: int, state_idx: int) -> float:
             notes = melody_by_measure[t]
             if not notes:
                 return 0.0
-            return sum(log_B[state_idx, pc % 12] for pc in notes) / len(notes)
+            return sum(log_B[state_idx, pc % 12] for pc in notes)
 
         # ── Viterbi DP ────────────────────────────────────────────────────────
         delta = np.full((T, n), -np.inf)
         psi   = np.zeros((T, n), dtype=int)
 
-        # Initialisation
         for i in range(n):
             delta[0, i] = log_pi[i] + log_obs(0, i)
 
-        # Recursion
         for t in range(1, T):
             for j in range(n):
-                candidates = delta[t - 1] + log_A[:, j]  # shape (7,)
+                candidates = delta[t - 1] + log_A[:, j]
                 psi[t, j]   = np.argmax(candidates)
                 delta[t, j] = candidates[psi[t, j]] + log_obs(t, j)
 
