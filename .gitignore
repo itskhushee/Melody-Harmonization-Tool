@@ -19,13 +19,11 @@ data/processed/*
 # Generated output MIDIs
 data/output/
 
-# Models
+# Models — ignore binary/large formats, track trained JSON weights
 *.pkl
 *.npy
-models/
-!models/transitions.json
-!models/emissions.json
-!models/hmm.json
+models/*.pkl
+models/*.npy
 
 # Jupyter
 .ipynb_checkpoints/
