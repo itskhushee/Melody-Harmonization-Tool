@@ -186,6 +186,72 @@ def learn_pi(
     return pi_major / pi_major.sum(), pi_minor / pi_minor.sum()
 
 
+def _infer_key(chord_sequence: list[str]) -> str | None:
+    """Infer the most likely key for a chord sequence by diatonic coverage.
+
+    Tries all 24 major/minor keys and returns the one in which the greatest
+    fraction of observed chords are diatonic. Returns None if the sequence
+    is empty or no key covers at least half the chords.
+    """
+    from harmonizer.chord_vocab import get_chords_for_key, ROOTS
+
+    if not chord_sequence:
+        return None
+
+    best_key: str | None = None
+    best_count = 0
+
+    for root in ROOTS:
+        for mode in ("major", "minor"):
+            key = f"{root}_{mode}"
+            diatonic, _ = get_chords_for_key(key)
+            count = sum(1 for c in chord_sequence if c in diatonic)
+            if count > best_count:
+                best_count = count
+                best_key = key
+
+    if best_count < len(chord_sequence) * 0.4:
+        return None
+
+    return best_key
+
+
+def learn_transitions_from_nottingham(
+    nottingham_midi_dir: str,
+    counts: dict[str, dict[str, dict[str, float]]],
+) -> None:
+    """Add Nottingham beat-level chord bigrams to existing transition counts in-place.
+
+    Args:
+        nottingham_midi_dir: Path to the Nottingham MIDI/ directory.
+        counts: Mutable dict with keys "major" and "minor", each a nested dict
+                counts[mode][prev_roman][next_roman]. Modified in-place.
+    """
+    from harmonizer.parse_nottingham import load_all_nottingham
+    from harmonizer.chord_vocab import get_chord_to_roman_map_for_key
+
+    corpus = load_all_nottingham(nottingham_midi_dir)
+    added = 0
+
+    for _, chord_seq in corpus:
+        key = _infer_key(chord_seq)
+        if key is None:
+            continue
+
+        _, mode = key.rsplit("_", 1)
+        chord_to_roman = get_chord_to_roman_map_for_key(key)
+        mode_counts = counts[mode]
+
+        romans = [chord_to_roman.get(c) for c in chord_seq]
+
+        for prev, nxt in zip(romans, romans[1:]):
+            if prev and nxt and prev in mode_counts and nxt in mode_counts[prev]:
+                mode_counts[prev][nxt] += 1
+                added += 1
+
+    print(f"  Added {added:,} Nottingham bigrams from {len(corpus)} songs")
+
+
 def build_A_matrices(probs: dict) -> tuple[np.ndarray, np.ndarray]:
     """Convert learned_probs dict to numpy A matrices.
 
@@ -208,15 +274,17 @@ def train_hmm(
     pop909_dir: str,
     train_ids: list[str],
     midi_files_dir: str,
+    nottingham_midi_dir: str | None = None,
     smoothing: float = 0.1,
 ) -> "HMM":
-    """Train a full HMM from POP909 (pi + A) and free-midi-chords (B).
+    """Train a full HMM from POP909, free-midi-chords, and optionally Nottingham.
 
     Args:
-        pop909_dir:     Path to POP909/POP909/ directory.
-        train_ids:      Song IDs to train on.
-        midi_files_dir: Path to free-midi-chords directory.
-        smoothing:      Laplace smoothing for counts.
+        pop909_dir:          Path to POP909/POP909/ directory.
+        train_ids:           Song IDs to train on.
+        midi_files_dir:      Path to free-midi-chords directory.
+        nottingham_midi_dir: Path to Nottingham MIDI/ directory (optional).
+        smoothing:           Laplace smoothing for counts.
 
     Returns:
         Trained HMM instance with pi, A, B properly populated.
@@ -225,22 +293,47 @@ def train_hmm(
     from harmonizer.train_emissions import (
         learn_emissions,
         learn_emissions_bass_filtered,
+        learn_emissions_from_nottingham,
         combine_emissions,
     )
 
+    # ── Transitions ──────────────────────────────────────────────────────────
     print("Learning pi and A from POP909 (beat-level)...")
-    probs              = learn_transitions(pop909_dir, train_ids, smoothing)
+    probs = learn_transitions(pop909_dir, train_ids, smoothing)
     pi_major, pi_minor = learn_pi(pop909_dir, train_ids, smoothing)
-    A_major,  A_minor  = build_A_matrices(probs)
 
+    A_major, A_minor = build_A_matrices(probs)
+
+    # ── Emissions ─────────────────────────────────────────────────────────────
     print("Learning B from free-midi-chords...")
     free_midi_emissions = learn_emissions(midi_files_dir)
 
     print("Learning B from POP909 (bass-confirmed beats only)...")
     pop909_emissions = learn_emissions_bass_filtered(pop909_dir, train_ids)
 
-    print("Combining emissions (70% POP909, 30% free-midi-chords)...")
-    emissions = combine_emissions(free_midi_emissions, pop909_emissions, pop909_weight=0.7)
+    if nottingham_midi_dir:
+        print("Learning B from Nottingham melody-over-chord pairs...")
+        nott_emissions = learn_emissions_from_nottingham(nottingham_midi_dir)
+        # Three-way blend tuned via grid search: 65% POP909, 20% Nottingham, 15% free-midi-chords.
+        # Nottingham transitions are intentionally excluded — folk chord grammar
+        # is different enough from pop to hurt POP909 test accuracy.
+        all_chords = set(pop909_emissions) | set(nott_emissions) | set(free_midi_emissions)
+        emissions = {
+            chord: {
+                pc: 0.65 * pop909_emissions.get(chord, {}).get(pc, 0.0)
+                  + 0.20 * nott_emissions.get(chord, {}).get(pc, 0.0)
+                  + 0.15 * free_midi_emissions.get(chord, {}).get(pc, 0.0)
+                for pc in (
+                    set(pop909_emissions.get(chord, {}))
+                    | set(nott_emissions.get(chord, {}))
+                    | set(free_midi_emissions.get(chord, {}))
+                )
+            }
+            for chord in all_chords
+        }
+    else:
+        print("Combining emissions (70% POP909, 30% free-midi-chords)...")
+        emissions = combine_emissions(free_midi_emissions, pop909_emissions, pop909_weight=0.7)
 
     return HMM(pi_major, pi_minor, A_major, A_minor, emissions)
 

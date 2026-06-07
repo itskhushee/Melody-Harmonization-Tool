@@ -11,9 +11,10 @@ def cmd_train(args: argparse.Namespace) -> None:
 
     train_ids, _ = get_train_test_split(args.pop909)
     hmm = train_hmm(
-        pop909_dir    = args.pop909,
-        train_ids     = train_ids,
-        midi_files_dir= args.midi_chords,
+        pop909_dir          = args.pop909,
+        train_ids           = train_ids,
+        midi_files_dir      = args.midi_chords,
+        nottingham_midi_dir = args.nottingham,
     )
     hmm.save(args.out)
 
@@ -52,9 +53,10 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── train ────────────────────────────────────────────────────────────────
     p_train = sub.add_parser("train", help="Train HMM from POP909 + free-midi-chords")
-    p_train.add_argument("--pop909",      required=True, help="Path to POP909/POP909/ directory")
-    p_train.add_argument("--midi-chords", required=True, help="Path to free-midi-chords midi_files/ directory")
-    p_train.add_argument("--out",         required=True, help="Output model .json path")
+    p_train.add_argument("--pop909",      required=True,  help="Path to POP909/POP909/ directory")
+    p_train.add_argument("--midi-chords", required=True,  help="Path to free-midi-chords directory")
+    p_train.add_argument("--nottingham",  default=None,   help="Path to Nottingham MIDI/ directory (optional)")
+    p_train.add_argument("--out",         required=True,  help="Output model .json path")
 
     # ── harmonize ────────────────────────────────────────────────────────────
     p_harm = sub.add_parser("harmonize", help="Harmonize a melody MIDI file")
