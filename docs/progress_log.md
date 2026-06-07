@@ -26,4 +26,12 @@ Narrative supplement to the GitHub Project board.
   - Beat-level:    **31.0%**  (10,608 / 34,272) — +1.4pp vs baseline
   - Measure-level: **23.5%**  (3,567 / 15,175) — +1.1pp vs baseline
 
+- **Nottingham dataset integration:**
+  - Added `parse_nottingham.py`: identifies chords from Track 1 triad pitch-class sets (Jaccard similarity), extracts melody-over-chord pairs beat-by-beat across 1,034 songs / 138,540 beats.
+  - Grid search showed Nottingham **transitions hurt** (-2.4pp, folk grammar ≠ pop grammar), but Nottingham **emissions help** (+0.2pp, note-over-chord signal is genre-neutral).
+  - Optimal 3-way emission blend: 65% POP909, 20% Nottingham, 15% free-midi-chords.
+  - **Updated accuracy:**
+    - Beat-level:    **31.2%**  (10,706 / 34,272) — +0.2pp vs previous, +1.6pp vs original baseline
+    - Measure-level: **23.7%**  (3,595 / 15,175)
+
 <!-- Add entries as work progresses -->

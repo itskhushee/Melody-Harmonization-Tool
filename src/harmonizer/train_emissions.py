@@ -322,6 +322,50 @@ def combine_emissions(
     return combined
 
 
+def learn_emissions_from_nottingham(
+    nottingham_midi_dir: str,
+    smoothing: float = 0.3,
+) -> dict:
+    """Learn P(pitch_class | chord) from Nottingham melody-over-chord pairs.
+
+    Parses all MIDI files in the Nottingham dataset, aligns melody notes with
+    identified chord labels beat-by-beat, and builds a pitch-class histogram
+    per chord — same format as learn_emissions_from_pop909().
+
+    Args:
+        nottingham_midi_dir: Path to the Nottingham MIDI/ directory.
+        smoothing:           Laplace smoothing added to every pitch-class count.
+
+    Returns:
+        Dict {chord_label: {str(pitch_class): probability}}
+    """
+    from harmonizer.parse_nottingham import load_all_nottingham
+
+    counts: dict[str, dict[str, float]] = {
+        chord: {str(pc): smoothing for pc in range(12)}
+        for chord in CHORD_VOCAB
+        if chord != "N"
+    }
+
+    corpus = load_all_nottingham(nottingham_midi_dir)
+    total_pairs = 0
+
+    for melody_seq, chord_seq in corpus:
+        for melody_notes, chord in zip(melody_seq, chord_seq):
+            if not melody_notes or chord not in counts:
+                continue
+            for pc in melody_notes:
+                counts[chord][str(pc % 12)] += 1
+                total_pairs += 1
+
+    print(f"  Learned emissions from {len(corpus)} Nottingham songs ({total_pairs:,} note-chord pairs)")
+
+    return {
+        chord: {pc: v / sum(row.values()) for pc, v in row.items()}
+        for chord, row in counts.items()
+    }
+
+
 def save_emissions(probs: dict, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
