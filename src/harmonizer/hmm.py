@@ -81,6 +81,7 @@ class HMM:
         self,
         melody_by_measure: list[list[int]],
         key: str = "C_major",
+        chord_tone_boost: float = 10.0,
     ) -> list[str]:
         """Predict one chord per measure using log-space Viterbi decoding.
 
@@ -88,6 +89,11 @@ class HMM:
             melody_by_measure: List of measures; each measure is a list of
                                pitch classes (0–11).
             key:               Key to harmonize in, e.g. "G_major", "D_minor".
+            chord_tone_boost:  Multiplier applied to chord-tone emission probs
+                               before renormalising. Higher = more aggressive
+                               chord-tone matching; lower = more chord changes.
+                               Use 10.0 for best test-set accuracy, 4.0–5.0 for
+                               more varied / musical output.
 
         Returns:
             List of chord label strings, one per measure.
@@ -114,14 +120,9 @@ class HMM:
             for pc_str, prob in self.emissions.get(chord, {}).items():
                 B[i, int(pc_str)] = prob
 
-        # Boost chord tones so non-matching observations more strongly rule out
-        # wrong chords. Diatonic chords share many scale tones, so without this
-        # the B rows are too similar and the transition prior dominates.
-        # Value of 10.0 found via empirical grid search on POP909 test set.
-        _CHORD_TONE_BOOST = 10.0
         for i, chord in enumerate(states):
             for pc in chord_pitch_classes(chord):
-                B[i, pc] *= _CHORD_TONE_BOOST
+                B[i, pc] *= chord_tone_boost
         B /= B.sum(axis=1, keepdims=True)
 
         log_B = np.log(B + 1e-10)            # shape (7, 12)
