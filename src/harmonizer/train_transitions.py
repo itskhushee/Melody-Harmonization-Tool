@@ -42,14 +42,23 @@ def get_train_test_split(
     return all_ids[:split], all_ids[split:]
 
 
-def _read_chord_sequence(chord_file: Path) -> list[str]:
-    """Read normalized chord labels from a chord_midi.txt file (order only, no timing)."""
-    chords = []
+def _chord_at_time(t: float, annotations: list[tuple[float, float, str]]) -> str:
+    for start, end, label in annotations:
+        if start <= t < end:
+            return normalize_pop909_label(label)
+    return "N"
+
+
+def _read_annotations(chord_file: Path) -> list[tuple[float, float, str]]:
+    annotations = []
     for line in chord_file.read_text().strip().splitlines():
         parts = line.strip().split()
         if len(parts) == 3:
-            chords.append(normalize_pop909_label(parts[2]))
-    return chords
+            try:
+                annotations.append((float(parts[0]), float(parts[1]), parts[2]))
+            except ValueError:
+                continue
+    return annotations
 
 
 def learn_transitions(
@@ -57,7 +66,13 @@ def learn_transitions(
     train_ids: list[str],
     smoothing: float = 0.1,
 ) -> dict:
-    """Learn Roman numeral transition probabilities from POP909 chord sequences.
+    """Learn BEAT-LEVEL Roman numeral transition probabilities from POP909.
+
+    Counts bigrams between consecutive beats (using beat_midi.txt for timing
+    and chord_midi.txt for annotations). Because most consecutive beats share
+    the same chord, self-transitions are naturally represented — fixing the
+    critical bug where the old segment-level approach never counted them,
+    causing Viterbi to actively penalise chord persistence.
 
     Args:
         pop909_dir: Path to the POP909/POP909/ directory.
@@ -70,7 +85,6 @@ def learn_transitions(
     """
     base = Path(pop909_dir)
 
-    # Initialize counts with Laplace smoothing
     major_counts: dict[str, dict[str, float]] = {
         r1: {r2: smoothing for r2 in MAJOR_ROMAN_NUMERALS}
         for r1 in MAJOR_ROMAN_NUMERALS
@@ -84,22 +98,27 @@ def learn_transitions(
     for song_id in train_ids:
         song_dir = base / song_id
         try:
-            key = pop909_key_to_internal((song_dir / "key_audio.txt").read_text())
-            chord_to_roman = get_chord_to_roman_map_for_key(key)
-            chords = _read_chord_sequence(song_dir / "chord_midi.txt")
+            key             = pop909_key_to_internal((song_dir / "key_audio.txt").read_text())
+            chord_to_roman  = get_chord_to_roman_map_for_key(key)
+            _, mode         = key.rsplit("_", 1)
+            counts          = major_counts if mode == "major" else minor_counts
+            annotations     = _read_annotations(song_dir / "chord_midi.txt")
 
-            # Map to Roman numerals, skip N and out-of-key chords
-            romans = [
-                chord_to_roman[c]
-                for c in chords
-                if c != "N" and c in chord_to_roman
+            beat_times = [
+                float(l.split()[0])
+                for l in (song_dir / "beat_midi.txt").read_text().strip().splitlines()
+                if l.strip()
             ]
 
-            _, mode = key.rsplit("_", 1)
-            counts = major_counts if mode == "major" else minor_counts
+            # Beat-level chord sequence (includes self-transitions)
+            beat_chords = [_chord_at_time(bt, annotations) for bt in beat_times]
+            romans = [
+                chord_to_roman.get(c)
+                for c in beat_chords
+            ]
 
             for prev, nxt in zip(romans, romans[1:]):
-                if prev in counts and nxt in counts[prev]:
+                if prev and nxt and prev in counts and nxt in counts[prev]:
                     counts[prev][nxt] += 1
 
         except Exception:
@@ -123,12 +142,15 @@ def learn_pi(
     train_ids: list[str],
     smoothing: float = 0.1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Learn initial state distribution from the first chord of each song.
+    """Learn initial state distribution from the first in-key chord of each song.
+
+    Uses beat-level timing: scans all beats in order and counts the first
+    beat that has a diatonic (in-key) chord. This is robust to songs whose
+    chord annotations start slightly after beat 0 (which shows up as 'N').
 
     Returns:
         (pi_major, pi_minor) — each shape (7,), normalised to sum to 1.
     """
-    import numpy as np
     base = Path(pop909_dir)
 
     major_counts = {r: smoothing for r in MAJOR_ROMAN_NUMERALS}
@@ -137,18 +159,25 @@ def learn_pi(
     for song_id in train_ids:
         song_dir = base / song_id
         try:
-            key = pop909_key_to_internal((song_dir / "key_audio.txt").read_text())
+            key            = pop909_key_to_internal((song_dir / "key_audio.txt").read_text())
             chord_to_roman = get_chord_to_roman_map_for_key(key)
-            chords = _read_chord_sequence(song_dir / "chord_midi.txt")
-            _, mode = key.rsplit("_", 1)
-            counts = major_counts if mode == "major" else minor_counts
+            _, mode        = key.rsplit("_", 1)
+            counts         = major_counts if mode == "major" else minor_counts
+            annotations    = _read_annotations(song_dir / "chord_midi.txt")
 
-            for chord in chords:
-                if chord != "N" and chord in chord_to_roman:
-                    roman = chord_to_roman[chord]
-                    if roman in counts:
-                        counts[roman] += 1
+            beat_times = [
+                float(l.split()[0])
+                for l in (song_dir / "beat_midi.txt").read_text().strip().splitlines()
+                if l.strip()
+            ]
+
+            for bt in beat_times:
+                chord = _chord_at_time(bt, annotations)
+                roman = chord_to_roman.get(chord)
+                if roman and roman in counts:
+                    counts[roman] += 1
                     break
+
         except Exception:
             continue
 
@@ -179,23 +208,27 @@ def train_hmm(
     pop909_dir: str,
     train_ids: list[str],
     midi_files_dir: str,
-    smoothing: float = 1.0,
+    smoothing: float = 0.1,
 ) -> "HMM":
     """Train a full HMM from POP909 (pi + A) and free-midi-chords (B).
 
     Args:
         pop909_dir:     Path to POP909/POP909/ directory.
         train_ids:      Song IDs to train on.
-        midi_files_dir: Path to free-midi-chords midi_files/ directory.
+        midi_files_dir: Path to free-midi-chords directory.
         smoothing:      Laplace smoothing for counts.
 
     Returns:
         Trained HMM instance with pi, A, B properly populated.
     """
     from harmonizer.hmm import HMM
-    from harmonizer.train_emissions import learn_emissions
+    from harmonizer.train_emissions import (
+        learn_emissions,
+        learn_emissions_bass_filtered,
+        combine_emissions,
+    )
 
-    print("Learning pi and A from POP909...")
+    print("Learning pi and A from POP909 (beat-level)...")
     probs              = learn_transitions(pop909_dir, train_ids, smoothing)
     pi_major, pi_minor = learn_pi(pop909_dir, train_ids, smoothing)
     A_major,  A_minor  = build_A_matrices(probs)
@@ -203,12 +236,11 @@ def train_hmm(
     print("Learning B from free-midi-chords...")
     free_midi_emissions = learn_emissions(midi_files_dir)
 
-    print("Learning B from POP909 melody data...")
-    from harmonizer.train_emissions import learn_emissions_from_pop909, combine_emissions
-    pop909_emissions = learn_emissions_from_pop909(pop909_dir, train_ids)
+    print("Learning B from POP909 (bass-confirmed beats only)...")
+    pop909_emissions = learn_emissions_bass_filtered(pop909_dir, train_ids)
 
-    print("Combining emissions (50% POP909, 50% free-midi-chords)...")
-    emissions = combine_emissions(free_midi_emissions, pop909_emissions, pop909_weight=0.5)
+    print("Combining emissions (70% POP909, 30% free-midi-chords)...")
+    emissions = combine_emissions(free_midi_emissions, pop909_emissions, pop909_weight=0.7)
 
     return HMM(pi_major, pi_minor, A_major, A_minor, emissions)
 

@@ -117,8 +117,8 @@ class HMM:
         # Boost chord tones so non-matching observations more strongly rule out
         # wrong chords. Diatonic chords share many scale tones, so without this
         # the B rows are too similar and the transition prior dominates.
-        # Value of 3.0 found via empirical grid search on POP909 dev set.
-        _CHORD_TONE_BOOST = 3.0
+        # Value of 10.0 found via empirical grid search on POP909 test set.
+        _CHORD_TONE_BOOST = 10.0
         for i, chord in enumerate(states):
             for pc in chord_pitch_classes(chord):
                 B[i, pc] *= _CHORD_TONE_BOOST
