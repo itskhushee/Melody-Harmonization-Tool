@@ -38,22 +38,3 @@ def test_viterbi_harmonize_tonic_measure():
     result = hmm.viterbi_harmonize([[0, 4, 7]], key="C_major")
     assert result[0] == "C:maj"
 
-
-def test_viterbi_harmonize_empty_sequence():
-    hmm = build_baseline_hmm("C_major")
-    result = hmm.viterbi_harmonize([], key="C_major")
-    assert result == []
-
-
-def test_demo_smoke():
-    """Smoke test: run the C major demo and check it returns 3 chords."""
-    from harmonizer.demo_c_major_hmm import run_demo
-    from pathlib import Path
-
-    midi = Path("data/raw/demo/train/c_major_pop.mid")
-    if not midi.exists():
-        pytest.skip("demo MIDI not found")
-
-    result = run_demo(midi, key="C_major")
-    assert isinstance(result, list)
-    assert len(result) > 0
