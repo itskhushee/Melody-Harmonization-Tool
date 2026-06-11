@@ -32,7 +32,7 @@ Each entry follows this structure:
 - **Prompt / Interaction:** *"Add `ai_use_disclosure.md` to my Melody-Harmonization-Tool into my Foundations of AI folder on my Desktop"*
 - **Output Used:** This file (`docs/ai_use_disclosure.md`) — initial template and structure
 - **Modifications:** None; used as generated
-- **Contributor:** Alejandro Lancia
+- **Contributor:** Alessandro Lancia
 
 ---
 

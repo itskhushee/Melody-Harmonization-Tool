@@ -5,7 +5,7 @@
 | Contributor | Role |
 |-------------|------|
 | Khushee Vakil | HMM implementation, training pipeline, harmonization pipeline |
-| Alejandro Lancia | Bug fixes, accuracy improvements, Nottingham integration |
+| Alessandro Lancia | Bug fixes, accuracy improvements, Nottingham integration |
 
 ## Work Split
 
@@ -21,7 +21,7 @@
 - Ran transition analysis on POP909 training data; generated `transition_analysis.png` for report
 
 
-### Alejandro Lancia
+### Alessandro Lancia
 - Fixed classmethod bug in `demo_c_major_hmm.py` and broken `cli.py` imports
 - Rewrote `cli.py` with working `evaluate` subcommand
 - Fixed silent pi learning bug (`learn_pi` was silently skipping all songs → pi stuck at uniform 1/7)
